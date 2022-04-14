@@ -54,17 +54,24 @@ solveOLS<-function(S,B){
   return(solution/sum(solution))
 }
 
-#return cell number, not proportion
-#do not print output
+
 solveOLSInternal<-function(S,B){
+
   D<-t(S)%*%S
   d<-t(S)%*%B
   A<-cbind(diag(dim(S)[2]))
   bzero<-c(rep(0,dim(S)[2]))
-  solution<-solve.QP(D,d,A,bzero)$solution
+
+  #Ryan Walker answer from "https://stackoverflow.com/questions/28381855/r-function-solve-qp-error-constraints-are-inconsistent-no-solution"
+  #WHICH THEY ALSO IMPLEMENTED IN "solveDampenedWLSj"!!!
+  nn2 = sqrt(norm(d,"2"))
+  solution = solve.QP(Dmat = D*nn2, dvec = d/(nn2^2), Amat = A, bvec = bzero, factorized=TRUE)$solution
+  #solution<-solve.QP(D,d,A,bzero)$solution
   names(solution)<-colnames(S)
   return(solution)
+
 }
+
 
 #solve using WLS with weights dampened by a certain dampening constant
 solveDampenedWLS<-function(S,B){
@@ -278,65 +285,96 @@ m.auc=function(data.m,group.v) {
 }  
 
 #perform DE analysis using MAST	    
-DEAnalysisMAST<-function(scdata,id,path){
+DEAnalysisMAST <- function(scdata,id,path){
   
   pseudo.count = 0.1
   data.used.log2   <- log2(scdata+pseudo.count)
-  colnames(data.used.log2)<-make.unique(colnames(data.used.log2))
-  diff.cutoff=0.5
-  for (i in unique(id)){
-    cells.symbol.list2     = colnames(data.used.log2)[which(id==i)]
-    cells.coord.list2      = match(cells.symbol.list2, colnames(data.used.log2))                          
-    cells.symbol.list1     = colnames(data.used.log2)[which(id != i)]
-    cells.coord.list1      = match(cells.symbol.list1, colnames(data.used.log2))   
-    data.used.log2.ordered  = cbind(data.used.log2[,cells.coord.list1], data.used.log2[,cells.coord.list2])
-    group.v <- c(rep(0,length(cells.coord.list1)), rep(1, length(cells.coord.list2)))
-    #ouput
-    log2.stat.result <- stat.log2(data.used.log2.ordered, group.v, pseudo.count)
-    Auc <- m.auc(data.used.log2.ordered, group.v)
-    bigtable <- data.frame(cbind(log2.stat.result, Auc))
+  colnames(data.used.log2) <- make.unique(colnames(data.used.log2))
+  diff.cutoff = 0.5
 
-    DE <- bigtable[bigtable$log2_fc >diff.cutoff,] 
-    dim(DE)
-    if(dim(DE)[1]>1){
-      data.1                 = data.used.log2[,cells.coord.list1]
-      data.2                 = data.used.log2[,cells.coord.list2]
-      genes.list = rownames(DE)
-      log2fold_change        = cbind(genes.list, DE$log2_fc)
-      colnames(log2fold_change) = c("gene.name", "log2fold_change")
-      counts  = as.data.frame(cbind( data.1[genes.list,], data.2[genes.list,] ))
-      groups  = c(rep("Cluster_Other", length(cells.coord.list1) ), rep(i, length(cells.coord.list2) ) )
-      groups  = as.character(groups)
-      data_for_MIST <- as.data.frame(cbind(rep(rownames(counts), dim(counts)[2]), melt(counts),rep(groups, each = dim(counts)[1]), rep(1, dim(counts)[1] * dim(counts)[2]) ))
-      colnames(data_for_MIST) = c("Gene", "Subject.ID", "Et", "Population", "Number.of.Cells")
-      vbeta = data_for_MIST
-      vbeta.fa <-FromFlatDF(vbeta, idvars=c("Subject.ID"),
-                            primerid='Gene', measurement='Et', ncells='Number.of.Cells',
-                            geneid="Gene",  cellvars=c('Number.of.Cells', 'Population'),
-                            phenovars=c('Population'), id='vbeta all')
-      vbeta.1 <- subset(vbeta.fa,Number.of.Cells==1)
-      # .3 MAST 
-      head(colData(vbeta.1))
-      zlm.output <- zlm(~ Population, vbeta.1, method='bayesglm', ebayes=TRUE)
-      show(zlm.output)
-      coefAndCI <- summary(zlm.output, logFC=TRUE)
-      zlm.lr <- lrTest(zlm.output, 'Population')
-      zlm.lr_pvalue <- melt(zlm.lr[,,'Pr(>Chisq)'])
-      zlm.lr_pvalue <- zlm.lr_pvalue[which(zlm.lr_pvalue$test.type == 'hurdle'),]
-      
-      
-      
-      lrTest.table <-  merge(zlm.lr_pvalue, DE, by.x = "primerid", by.y = "row.names")
-      colnames(lrTest.table) <- c("Gene", "test.type", "p_value", paste("log2.mean.", "Cluster_Other", sep=""), paste("log2.mean.",i,sep=""), "log2fold_change", "Auc")
-      cluster_lrTest.table <- lrTest.table[rev(order(lrTest.table$Auc)),]
-      
+  for (i in unique(id)){
+
+    output.file <- paste(path,"/",i,"_lrTest.csv", sep="")
+
+    if(! file.exists(output.file)){#avoid repeating if already executed!
+
+      print(paste("working on", i, sep = " "))
+
+      cells.symbol.list2     = colnames(data.used.log2)[which(id==i)]
+      cells.coord.list2      = match(cells.symbol.list2, colnames(data.used.log2))                          
+      cells.symbol.list1     = colnames(data.used.log2)[which(id != i)]
+      cells.coord.list1      = match(cells.symbol.list1, colnames(data.used.log2))   
+      data.used.log2.ordered  = cbind(data.used.log2[,cells.coord.list1], data.used.log2[,cells.coord.list2])
+      group.v <- c(rep(0,length(cells.coord.list1)), rep(1, length(cells.coord.list2)))
+      #ouput
+      log2.stat.result <- stat.log2(data.used.log2.ordered, group.v, pseudo.count)
+      Auc <- m.auc(data.used.log2.ordered, group.v)
+      bigtable <- data.frame(cbind(log2.stat.result, Auc))
+
+      DE <- bigtable[bigtable$log2_fc >diff.cutoff, , drop = FALSE] 
+      print(head(DE))
+      print(dim(DE))
+
+      #if(dim(DE)[1]>1){ 
+      if(dim(DE)[1]>0){ 
+        data.1                 = data.used.log2[,cells.coord.list1, drop = FALSE]
+        data.2                 = data.used.log2[,cells.coord.list2, drop = FALSE]
+        genes.list = rownames(DE)
+        log2fold_change        = cbind(genes.list, DE$log2_fc)
+        colnames(log2fold_change) = c("gene.name", "log2fold_change")
+
+        counts  = as.data.frame(cbind( data.1[genes.list, , drop = FALSE], data.2[genes.list, , drop = FALSE] ))
+
+        groups  = c(rep("Cluster_Other", length(cells.coord.list1) ), rep(i, length(cells.coord.list2) ) )
+        groups  = as.character(groups)
+
+        data_for_MIST <- as.data.frame(cbind(rep(rownames(counts), dim(counts)[2]), melt(counts),rep(groups, each = dim(counts)[1]), rep(1, dim(counts)[1] * dim(counts)[2]) ))
+        colnames(data_for_MIST) = c("Gene", "Subject.ID", "Et", "Population", "Number.of.Cells")
+
+        vbeta = data_for_MIST
+        vbeta.fa <- FromFlatDF(vbeta, idvars=c("Subject.ID"),
+                              primerid='Gene', measurement='Et', ncells='Number.of.Cells',
+                              geneid="Gene",  cellvars=c('Number.of.Cells', 'Population'),
+                              phenovars=c('Population'), id='vbeta all')
+        vbeta.1 <- subset(vbeta.fa,Number.of.Cells == 1)
+
+        # .3 MAST 
+        head(colData(vbeta.1))
+        zlm.output <- zlm(~ Population, vbeta.1, method='bayesglm', ebayes=TRUE)
+        show(zlm.output)
+        coefAndCI <- summary(zlm.output, logFC=TRUE)
+        zlm.lr <- lrTest(zlm.output, 'Population')
+        zlm.lr_pvalue <- melt(zlm.lr[,,'Pr(>Chisq)'])
+        zlm.lr_pvalue <- zlm.lr_pvalue[which(zlm.lr_pvalue$test.type == 'hurdle'),]
+        print(head(zlm.lr_pvalue))
+
+        lrTest.table <-  merge(zlm.lr_pvalue, DE, by.x = "primerid", by.y = "row.names")
+        colnames(lrTest.table) <- c("Gene", "test.type", "p_value", paste("log2.mean.", "Cluster_Other", sep=""), paste("log2.mean.",i,sep=""), "log2fold_change", "Auc")
+        cluster_lrTest.table <- lrTest.table[rev(order(lrTest.table$Auc)), , drop = FALSE]
+        
+      } else {
+
+        cluster_lrTest.table <- data.frame(matrix(nrow=0, ncol=7))
+        colnames(cluster_lrTest.table) <- c("Gene","test.type","p_value","log2.mean.Cluster_Other",paste("log2.mean",i,sep="."),"log2fold_change","Auc")
+        
+      }
+
       #. 4 save results
+      print(paste("Saving results of", i, sep=" "))
       write.csv(cluster_lrTest.table, file=paste(path,"/",i,"_lrTest.csv", sep=""))
       save(cluster_lrTest.table, file=paste(path,"/",i,"_MIST.RData", sep=""))
+
+    } else {
+
+      print(paste("skipping file", output.file, sep = " "))
+
     }
+
   }
+
 }
 
+	    
 #build signature matrix using genes identified by DEAnalysisMAST()
 buildSignatureMatrixMAST<-function(scdata,id,path,diff.cutoff=0.5,pval.cutoff=0.01){
   #compute differentially expressed genes for each cell type
@@ -407,4 +445,3 @@ buildSignatureMatrixMAST<-function(scdata,id,path,diff.cutoff=0.5,pval.cutoff=0.
   save(Sig,file=paste(path,"/Sig.RData",sep=""))
   return(Sig)
 }
-
