@@ -398,50 +398,79 @@ buildSignatureMatrixMAST<-function(scdata,id,path,diff.cutoff=0.5,pval.cutoff=0.
   #need to reduce number of genes
   #for each subset, order significant genes by decreasing fold change, choose between 50 and 200 genes
   #for each, iterate and choose matrix with lowest condition number
-  conditionNumbers<-c()
-  for(G in 50:200){
-    Genes<-c()
-    j=1
-    for (i in unique(id)){
-      if(numberofGenes[j]>0){
-      temp<-paste("cluster_lrTest.table.",i,sep="")
-      temp<-as.name(temp)
-      temp<-eval(parse(text = temp))
-      temp<-temp[order(temp$log2fold_change,decreasing=TRUE),]
-      Genes<-c(Genes,varhandle::unfactor(temp$Gene[1:min(G,numberofGenes[j])]))
+  
+  num_cores <- max(1, parallel::detectCores()-3)
+  doMC::registerDoMC(cores = num_cores)
+
+  conditionNumbers <- foreach::foreach(G = 50:200, .combine='c') %dopar% { 
+
+      print(G)
+      Genes <- c()
+      j = 1
+
+      for (i in unique(id)){
+
+        if(numberofGenes[j] > 0){
+
+          temp <- paste("cluster_lrTest.table.", i, sep="")
+          temp <- as.name(temp)
+          temp <- eval(parse(text = temp))
+          temp <- temp[order(temp$log2fold_change, decreasing=TRUE),]
+          #Genes <- c(Genes, varhandle::unfactor(temp$Gene[1:min(G,numberofGenes[j])]))
+          Genes <- c(Genes, as.character(temp$Gene[1:min(G,numberofGenes[j])]))
+
+        }
+
+        j = j + 1
+
       }
-      j=j+1
+
+      Genes <- unique(Genes)
+      #make signature matrix
+      ExprSubset <- scdata[Genes,]
+      Sig <- NULL
+
+      Sig = lapply(unique(id), function(x) Matrix::rowMeans(ExprSubset[,which(id==x)])) 
+      Sig = do.call(cbind.data.frame, Sig)
+
+      colnames(Sig) <- unique(id)
+      kappa(Sig)
+
+  }
+
+  G <- which.min(conditionNumbers) + min(49,numberofGenes-1)
+  Genes <- c()
+  j = 1
+
+  for (i in unique(id)){
+
+      if(numberofGenes[j] > 0){
+
+        temp <- paste("cluster_lrTest.table.", i, sep="")
+        temp <- as.name(temp)
+        temp <- eval(parse(text = temp))
+        temp <- temp[order(temp$log2fold_change, decreasing=TRUE),]
+        #Genes <- c(Genes, varhandle::unfactor(temp$Gene[1:min(G,numberofGenes[j])]))
+        Genes <- c(Genes, as.character(temp$Gene[1:min(G,numberofGenes[j])]))
+
+      }
+
+      j = j + 1
+
     }
-    Genes<-unique(Genes)
+
+    Genes <- unique(Genes)
     #make signature matrix
-    ExprSubset<-scdata[Genes,]
-    Sig<-NULL
-    for (i in unique(id)){
-      Sig<-cbind(Sig,(apply(ExprSubset,1,function(y) mean(y[which(id==i)]))))
-    }
-    colnames(Sig)<-unique(id)
-    conditionNumbers<-c(conditionNumbers,kappa(Sig))
-  }
-  G<-which.min(conditionNumbers)+min(49,numberofGenes-1)
-  Genes<-c()
-  j=1
-  for (i in unique(id)){
-    if(numberofGenes[j]>0){
-    temp<-paste("cluster_lrTest.table.",i,sep="")
-    temp<-as.name(temp)
-    temp<-eval(parse(text = temp))
-    temp<-temp[order(temp$log2fold_change,decreasing=TRUE),]
-    Genes<-c(Genes,varhandle::unfactor(temp$Gene[1:min(G,numberofGenes[j])]))
-    }
-    j=j+1
-  }
-  Genes<-unique(Genes)
-  ExprSubset<-scdata[Genes,]
-  Sig<-NULL
-  for (i in unique(id)){
-    Sig<-cbind(Sig,(apply(ExprSubset,1,function(y) mean(y[which(id==i)]))))
-  }
-  colnames(Sig)<-unique(id)
+    ExprSubset <- scdata[Genes,]
+    Sig <- NULL
+
+    Sig = lapply(unique(id), function(x) Matrix::rowMeans(ExprSubset[,which(id==x)])) 
+    Sig = do.call(cbind.data.frame, Sig)
+
+    colnames(Sig) <- unique(id)
+
   save(Sig,file=paste(path,"/Sig.RData",sep=""))
+
   return(Sig)
+		 
 }
