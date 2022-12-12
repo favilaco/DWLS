@@ -25,13 +25,13 @@ if (!require("MAST")) {
 }
 
 #load packages
-library(quadprog)
-library(reshape)
-library(e1071)
-library(Seurat)
-library(ROCR)
-library(varhandle)
-library(MAST)
+suppressMessages(library(quadprog))
+suppressMessages(library(reshape))
+suppressMessages(library(e1071))
+suppressMessages(library(Seurat))
+suppressMessages(library(ROCR))
+suppressMessages(library(varhandle))
+suppressMessages(library(MAST))
 
 #trim bulk and single-cell data to contain the same genes
 trimData<-function(Signature,bulkData){
